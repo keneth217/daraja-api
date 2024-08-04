@@ -49,9 +49,9 @@ public class MpesaService {
         HttpEntity<String> entity = new HttpEntity<>(headers);
         ResponseEntity<String> response = restTemplate.exchange(tokenUrl, HttpMethod.GET, entity, String.class);
 
-        if (response.getStatusCode().isSuccessful()) {
+        if (response.getStatusCode().is2xxSuccessful()) {
             JSONObject jsonObject = new JSONObject(response.getBody());
-            System.out.println("--------------generating token-----------");
+            System.out.println("-----------generating token ----------");
             System.out.println(response);
             return jsonObject.getString("access_token");
         }
@@ -83,6 +83,7 @@ public class MpesaService {
         ResponseEntity<String> response = restTemplate.exchange(stkPushUrl, HttpMethod.POST, entity, String.class);
 
         if (response.getStatusCode().is2xxSuccessful()) {
+            System.out.println("----------------initiating stk push ----------");
             saveResponse(phoneNumber, amount, response.getBody(), getTimestamp());
         } else {
             throw new RuntimeException("Failed to initiate STK push");
