@@ -1,4 +1,4 @@
-package com.safaricom.api;
+package com.safaricom.api.dto;
 
 import jakarta.persistence.*;
 import lombok.Data;
@@ -13,7 +13,6 @@ public class StkPushResponse {
     private Long id;
     private String phoneNumber;
     private double amount;
-
     @Column(length = 2000) // or @Lob for TEXT type
     private String response;
     private String timestamp;
