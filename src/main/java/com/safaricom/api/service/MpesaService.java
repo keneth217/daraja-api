@@ -1,19 +1,28 @@
 package com.safaricom.api.service;
 
-import com.safaricom.api.repository.StkPushResponseRepository;
-import com.safaricom.api.dto.StkPushResponse;
+import com.safaricom.api.dto.StkPushRequest;
+import com.safaricom.api.entity.CallbackMetadata;
+import com.safaricom.api.entity.MetadataItem;
+import com.safaricom.api.entity.MpesaTransaction;
+import com.safaricom.api.entity.StkPushCallback;
+import com.safaricom.api.repository.MpesaTransactionRepository;
+import com.safaricom.api.repository.StkPushCallbackRepository;
+import okhttp3.*;
+import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
 
 @Service
 public class MpesaService {
@@ -36,82 +45,164 @@ public class MpesaService {
     @Value("${safaricom.api.callback_url}")
     private String callbackUrl;
 
-    private final RestTemplate restTemplate = new RestTemplate();
-    private final StkPushResponseRepository responseRepository;
+    private final StkPushCallbackRepository callbackRepository;
+    private final ObjectMapper objectMapper;
+    @Autowired
+    private MpesaTransactionRepository transactionRepository;
 
-    public MpesaService(StkPushResponseRepository responseRepository) {
-        this.responseRepository = responseRepository;
+    public MpesaService(StkPushCallbackRepository callbackRepository, ObjectMapper objectMapper) {
+        this.callbackRepository = callbackRepository;
+        this.objectMapper = objectMapper;
     }
 
-    public String generateToken() {
+    // Method to generate OAuth token
+    public String generateToken() throws IOException {
+        OkHttpClient client = new OkHttpClient();
         String tokenUrl = apiUrl + "/oauth/v1/generate?grant_type=client_credentials";
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBasicAuth(username, password);
+        String credentials = Credentials.basic(username, password); // Base64 encoding of username and password
+        Request request = new Request.Builder()
+                .url(tokenUrl)
+                .get()
+                .addHeader("Authorization", credentials)
+                .build();
 
-        HttpEntity<String> entity = new HttpEntity<>(headers);
-        ResponseEntity<String> response = restTemplate.exchange(tokenUrl, HttpMethod.GET, entity, String.class);
-
-        if (response.getStatusCode().is2xxSuccessful()) {
-            JSONObject jsonObject = new JSONObject(response.getBody());
-            System.out.println("-----------generating token ----------");
-            System.out.println(response);
-            return jsonObject.getString("access_token");
+        try (Response response = client.newCall(request).execute()) {
+            if (response.isSuccessful() && response.body() != null) {
+                String responseBody = response.body().string();
+                JSONObject jsonObject = new JSONObject(responseBody);
+                return jsonObject.getString("access_token"); // Extract token
+            } else {
+                throw new RuntimeException("Failed to retrieve access token: " + response.message());
+            }
         }
-        throw new RuntimeException("Failed to retrieve access token");
     }
 
-    public void initiateSTKPush(String phoneNumber, double amount) {
+    // Method to initiate STK push
+    public void initiateSTKPush(StkPushRequest stkPushRequest) throws IOException {
         String token = generateToken();
-        String stkPushUrl = apiUrl + "/mpesa/stkpush/v1/processrequest";
+        OkHttpClient client = new OkHttpClient();
+        MediaType mediaType = MediaType.parse("application/json");
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + token);
-        headers.set("Content-Type", "application/json");
+        // Prepare request body
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("BusinessShortCode", lipaNaMpesaShortcode);
+        requestBody.put("Password", generatePassword()); // Generate password
+        requestBody.put("Timestamp", getCurrentTimestamp()); // Get current timestamp
+        requestBody.put("TransactionType", "CustomerPayBillOnline");
+        requestBody.put("Amount", stkPushRequest.getAmount()); // Use the actual amount
+        requestBody.put("PartyA", stkPushRequest.getPhoneNumber()); // Use the actual phone number
+        requestBody.put("PartyB", lipaNaMpesaShortcode); // Shortcode should be the same for PartyB
+        requestBody.put("PhoneNumber",stkPushRequest.getPhoneNumber()); // Use the actual phone number
+        requestBody.put("CallBackURL", callbackUrl);
+        requestBody.put("AccountReference", "test");
+        requestBody.put("TransactionDesc", "test");
 
-        JSONObject request = new JSONObject();
-        request.put("BusinessShortCode", lipaNaMpesaShortcode);
-        request.put("Password", generatePassword());
-        request.put("Timestamp", getTimestamp());
-        request.put("TransactionType", "CustomerPayBillOnline");
-        request.put("Amount", amount);
-        request.put("PartyA", phoneNumber);
-        request.put("PartyB", lipaNaMpesaShortcode);
-        request.put("PhoneNumber", phoneNumber);
-        request.put("CallBackURL", callbackUrl);
-        request.put("AccountReference", "Test");
-        request.put("TransactionDesc", "Test");
+        RequestBody body = RequestBody.create(mediaType, requestBody.toString());
+        Request request = new Request.Builder()
+                .url(apiUrl + "/mpesa/stkpush/v1/processrequest")
+                .post(body)
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Authorization", "Bearer " + token) // Use the generated token
+                .build();
 
-        HttpEntity<String> entity = new HttpEntity<>(request.toString(), headers);
-        ResponseEntity<String> response = restTemplate.exchange(stkPushUrl, HttpMethod.POST, entity, String.class);
-
-        if (response.getStatusCode().is2xxSuccessful()) {
-            System.out.println("----------------initiating stk push ----------");
-            saveResponse(phoneNumber, amount, response.getBody(), getTimestamp());
-        } else {
-            throw new RuntimeException("Failed to initiate STK push");
+        try (Response response = client.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                String errorBody = response.body() != null ? response.body().string() : "No response body";
+                throw new RuntimeException("Failed to initiate STK push: " + response.message() + " - " + errorBody);
+            }
+            // Read and log the successful response
+            String responseBody = response.body() != null ? response.body().string() : "No response body";
+            System.out.println("STK Push Response: " + responseBody);
+        } catch (IOException e) {
+            // Log the exception message
+            e.printStackTrace();
+            throw new RuntimeException("IOException during STK Push: " + e.getMessage(), e);
         }
     }
 
-    private void saveResponse(String phoneNumber, double amount, String responseBody, String timestamp) {
-        StkPushResponse response = new StkPushResponse();
-        response.setPhoneNumber(phoneNumber);
-        response.setAmount(amount);
-        response.setResponse(responseBody);
-        response.setTimestamp(timestamp);
-        responseRepository.save(response);
+    // Method to handle the callback from M-PESA
+    public void processCallback(String callbackResponse) {
+        try {
+            // Print the entire callback response for debugging
+            System.out.println("Callback Response: " + callbackResponse);
+
+            // Parse the JSON response manually
+            JSONObject jsonResponse = new JSONObject(callbackResponse);
+
+            // Check if CallbackMetadata is present
+            if (!jsonResponse.has("Body") || !jsonResponse.getJSONObject("Body").has("stkCallback")
+                    || !jsonResponse.getJSONObject("Body").getJSONObject("stkCallback").has("CallbackMetadata")) {
+
+                // For failed transactions
+                JSONObject stkCallback = jsonResponse.getJSONObject("Body").getJSONObject("stkCallback");
+                String resultDesc = stkCallback.getString("ResultDesc");
+                System.out.println("Transaction failed: " + resultDesc);
+                return;
+            }
+
+            // Extract CallbackMetadata
+            JSONObject stkCallback = jsonResponse.getJSONObject("Body").getJSONObject("stkCallback");
+            JSONObject callbackMetadataJson = stkCallback.getJSONObject("CallbackMetadata");
+            JSONArray itemArray = callbackMetadataJson.getJSONArray("Item");
+
+            // Extract values from CallbackMetadata
+            String amount = null;
+            String mpesaCode = null;
+            String phoneNumber = null;
+
+            for (int i = 0; i < itemArray.length(); i++) {
+                JSONObject itemJson = itemArray.getJSONObject(i);
+                String name = itemJson.getString("Name");
+
+                // Handle Value as different types
+                Object valueObj = itemJson.get("Value");
+                String value;
+                if (valueObj instanceof String) {
+                    value = (String) valueObj;
+                } else if (valueObj instanceof BigDecimal) {
+                    value = ((BigDecimal) valueObj).toPlainString(); // Convert BigDecimal to String
+                } else {
+                    value = valueObj.toString();
+                }
+
+                if ("Amount".equals(name)) {
+                    amount = value;
+                } else if ("MpesaReceiptNumber".equals(name)) {
+                    mpesaCode = value;
+                } else if ("PhoneNumber".equals(name)) {
+                    phoneNumber = value;
+                }
+            }
+
+            // Save to the database
+            MpesaTransaction transaction = new MpesaTransaction();
+            transaction.setAmount(amount);
+            transaction.setMpesaReceiptNumber(mpesaCode);
+            transaction.setPhoneNumber(phoneNumber);
+
+            transactionRepository.save(transaction);
+
+            // Log extracted values
+            System.out.println(String.format("Amount: %s, MpesaCode: %s, PhoneNumber: %s", amount, mpesaCode, phoneNumber));
+
+        } catch (Exception e) {
+            // Log and rethrow the exception
+            System.err.println("Failed to process callback: " + e.getMessage());
+            throw new RuntimeException("Failed to process callback: " + e.getMessage(), e);
+        }
     }
 
-    private String generatePassword() {
-        // Implement base64 encoding of shortcode+passkey+timestamp
-        String shortcode = lipaNaMpesaShortcode;
-        String passkey = lipaNaMpesaPasskey;
-        String timestamp = getTimestamp();
-        String password = shortcode + passkey + timestamp;
-        return java.util.Base64.getEncoder().encodeToString(password.getBytes());
-    }
 
-    private String getTimestamp() {
+    // Method to get current timestamp in the required format
+    private String getCurrentTimestamp() {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
         return LocalDateTime.now().format(formatter);
+    }
+
+    // Method to generate password for STK push
+    private String generatePassword() {
+        String timestamp = getCurrentTimestamp();
+        String passwordString = lipaNaMpesaShortcode + lipaNaMpesaPasskey + timestamp;
+        return Base64.getEncoder().encodeToString(passwordString.getBytes(StandardCharsets.UTF_8));
     }
 }
