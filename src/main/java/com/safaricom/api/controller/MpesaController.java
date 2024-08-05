@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 public class MpesaController {
 
     private final MpesaService mpesaService;
-    private final StkPushCallbackRepository callbackRepository;
+//    private final StkPushCallbackRepository callbackRepository;
 
     @PostMapping("/initiate-stk-push")
     public ResponseEntity<String> initiateSTKPush(@RequestBody StkPushRequest stkPushRequest) {

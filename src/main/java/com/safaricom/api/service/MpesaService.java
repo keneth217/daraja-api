@@ -7,6 +7,7 @@ import com.safaricom.api.entity.MpesaTransaction;
 import com.safaricom.api.entity.StkPushCallback;
 import com.safaricom.api.repository.MpesaTransactionRepository;
 import com.safaricom.api.repository.StkPushCallbackRepository;
+import jakarta.transaction.Transactional;
 import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -44,13 +45,14 @@ public class MpesaService {
 
     @Value("${safaricom.api.callback_url}")
     private String callbackUrl;
-
+private final MpesaTransactionRepository transactionRepository;
     private final StkPushCallbackRepository callbackRepository;
     private final ObjectMapper objectMapper;
-    @Autowired
-    private MpesaTransactionRepository transactionRepository;
 
-    public MpesaService(StkPushCallbackRepository callbackRepository, ObjectMapper objectMapper) {
+
+
+    public MpesaService(MpesaTransactionRepository transactionRepository, StkPushCallbackRepository callbackRepository, ObjectMapper objectMapper) {
+        this.transactionRepository = transactionRepository;
         this.callbackRepository = callbackRepository;
         this.objectMapper = objectMapper;
     }
@@ -121,17 +123,19 @@ public class MpesaService {
     }
 
     // Method to handle the callback from M-PESA
+    @Transactional
     public void processCallback(String callbackResponse) {
         try {
             // Print the entire callback response for debugging
             System.out.println("Callback Response: " + callbackResponse);
 
-            // Parse the JSON response manually
+            // Parse the JSON response
             JSONObject jsonResponse = new JSONObject(callbackResponse);
 
             // Check if CallbackMetadata is present
-            if (!jsonResponse.has("Body") || !jsonResponse.getJSONObject("Body").has("stkCallback")
-                    || !jsonResponse.getJSONObject("Body").getJSONObject("stkCallback").has("CallbackMetadata")) {
+            if (!jsonResponse.has("Body") ||
+                    !jsonResponse.getJSONObject("Body").has("stkCallback") ||
+                    !jsonResponse.getJSONObject("Body").getJSONObject("stkCallback").has("CallbackMetadata")) {
 
                 // For failed transactions
                 JSONObject stkCallback = jsonResponse.getJSONObject("Body").getJSONObject("stkCallback");
@@ -159,26 +163,33 @@ public class MpesaService {
                 String value;
                 if (valueObj instanceof String) {
                     value = (String) valueObj;
-                } else if (valueObj instanceof BigDecimal) {
-                    value = ((BigDecimal) valueObj).toPlainString(); // Convert BigDecimal to String
+                } else if (valueObj instanceof Number) {
+                    value = valueObj.toString(); // Convert Number to String
                 } else {
                     value = valueObj.toString();
                 }
 
-                if ("Amount".equals(name)) {
-                    amount = value;
-                } else if ("MpesaReceiptNumber".equals(name)) {
-                    mpesaCode = value;
-                } else if ("PhoneNumber".equals(name)) {
-                    phoneNumber = value;
+                switch (name) {
+                    case "Amount":
+                        amount = value;
+                        break;
+                    case "MpesaReceiptNumber":
+                        mpesaCode = value;
+                        break;
+                    case "PhoneNumber":
+                        phoneNumber = value;
+                        break;
                 }
             }
 
-            // Save to the database
+            // Create and save the transaction entity
             MpesaTransaction transaction = new MpesaTransaction();
             transaction.setAmount(amount);
             transaction.setMpesaReceiptNumber(mpesaCode);
             transaction.setPhoneNumber(phoneNumber);
+
+            System.out.println("--------------------------saving to database--------------------");
+            System.out.println(transaction);
 
             transactionRepository.save(transaction);
 
@@ -191,6 +202,7 @@ public class MpesaService {
             throw new RuntimeException("Failed to process callback: " + e.getMessage(), e);
         }
     }
+
 
 
     // Method to get current timestamp in the required format
