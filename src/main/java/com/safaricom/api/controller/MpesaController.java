@@ -1,17 +1,20 @@
 package com.safaricom.api.controller;
 
+import com.safaricom.api.dto.StkPushRequest;
+import com.safaricom.api.entity.CallbackMetadata;
+import com.safaricom.api.entity.MetadataItem;
+import com.safaricom.api.entity.StkPushCallback;
+import com.safaricom.api.repository.StkPushCallbackRepository;
 import com.safaricom.api.service.MpesaService;
-import com.safaricom.api.dto.StkPushResponse;
-import com.safaricom.api.repository.StkPushResponseRepository;
 import lombok.AllArgsConstructor;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
+
+import java.io.IOException;
+import java.util.stream.Collectors;
 
 @RestController
 @AllArgsConstructor
@@ -19,84 +22,121 @@ import java.util.List;
 public class MpesaController {
 
     private final MpesaService mpesaService;
-    private final StkPushResponseRepository responseRepository;
+    private final StkPushCallbackRepository callbackRepository;
 
-    @GetMapping("/initiate-stk-push")
-    public String initiateSTKPush(@RequestParam String phoneNumber, @RequestParam double amount) {
-        mpesaService.initiateSTKPush(phoneNumber, amount);
-        return "STK Push initiated";
+    @PostMapping("/initiate-stk-push")
+    public ResponseEntity<String> initiateSTKPush(@RequestBody StkPushRequest stkPushRequest) {
+        try {
+            mpesaService.initiateSTKPush(stkPushRequest);
+            return ResponseEntity.ok("STK Push initiated");
+        } catch (IOException e) {
+            // Log the exception message
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to initiate STK Push");
+        }
     }
 
     @PostMapping("/callback")
-    public void handleCallback(@RequestBody String callbackResponse) {
-        // Parse the callback response and save to the database
-        JSONObject jsonObject = new JSONObject(callbackResponse);
-        JSONObject stkCallback = jsonObject.getJSONObject("Body").getJSONObject("stkCallback");
-        System.out.println("-------callback----------------");
-        System.out.println(stkCallback);
-        String merchantRequestId = stkCallback.getString("MerchantRequestID");
-        String checkoutRequestId = stkCallback.getString("CheckoutRequestID");
-        int resultCode = stkCallback.getInt("ResultCode");
-        String resultDesc = stkCallback.getString("ResultDesc");
-
-        // Extract details from CallbackMetadata
-        JSONObject metadata = stkCallback.getJSONObject("CallbackMetadata");
-        JSONArray items = metadata.getJSONArray("Item");
-        System.out.println("-----------------call back metDt------------");
-        System.out.println(metadata);
-        System.out.println(items);
-
-        String phoneNumber = null;
-        double amount = 0;
-        for (int i = 0; i < items.length(); i++) {
-            JSONObject item = items.getJSONObject(i);
-            if (item.getString("Name").equals("PhoneNumber")) {
-                phoneNumber = item.getString("Value");
-            } else if (item.getString("Name").equals("Amount")) {
-                amount = item.getDouble("Value");
-            }
+    public String handleCallback(@RequestBody String callbackResponse) {
+        try {
+            // Delegate the processing to the service
+            mpesaService.processCallback(callbackResponse);
+            return "ok";
+        } catch (Exception e) {
+            // Log and handle the exception
+            System.err.println("Failed to handle callback: " + e.getMessage());
+            return "ok";
         }
-
-        // Save response to database
-        StkPushResponse response = new StkPushResponse();
-        response.setPhoneNumber(phoneNumber);
-        response.setAmount(amount);
-        response.setResponse(callbackResponse);
-        response.setTimestamp(getTimestamp());
-        responseRepository.save(response);
     }
 
     @PostMapping("/confirmation")
     public ResponseEntity<String> handleConfirmation(@RequestBody String request) {
-        logger.info("Received M-PESA confirmation request: {}", request);
-
-        // Parse and handle the confirmation request here
-        // This is typically where you'd update your database with the payment status
-
-        // Example response for success
-        return new ResponseEntity<>("Confirmation handled successfully", HttpStatus.OK);
+        // Implement this method in MpesaService if needed
+        return ResponseEntity.ok("Confirmation handled successfully");
     }
 
     @PostMapping("/validation")
     public ResponseEntity<String> handleValidation(@RequestBody String request) {
-        logger.info("Received M-PESA validation request: {}", request);
-
-        // Parse and handle the validation request here
-        // This is typically where you'd validate the request before confirming it
-
-        // Example response for success
-        return new ResponseEntity<>("Validation handled successfully", HttpStatus.OK);
+        // Implement this method in MpesaService if needed
+        return ResponseEntity.ok("Validation handled successfully");
     }
-
-    private String getTimestamp() {
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
-        return LocalDateTime.now().format(formatter);
-    }
-
-    @GetMapping("/responses")
-    public List<StkPushResponse> getAllResponses() {
-        return responseRepository.findAll();
-    }
-
-
+//    @PostMapping("/api/callback")
+//    public ResponseEntity<String> handleCallback(@RequestBody String callbackResponse) {
+//        try {
+//            // Parse the JSON response
+//            JSONObject jsonResponse = new JSONObject(callbackResponse);
+//            JSONObject stkCallback = jsonResponse.getJSONObject("Body")
+//                    .getJSONObject("stkCallback");
+//
+//            // Check if CallbackMetadata is present
+//            if (!stkCallback.has("CallbackMetadata")) {
+//                // Handle failed transactions
+//                String resultDesc = stkCallback.getString("ResultDesc");
+//                System.out.println("Failed Transaction: " + resultDesc);
+//                return ResponseEntity.ok("Data received");
+//            }
+//
+//            // Extract CallbackMetadata
+//            JSONObject callbackMetadataJson = stkCallback.getJSONObject("CallbackMetadata");
+//            JSONArray itemArray = callbackMetadataJson.getJSONArray("Item");
+//
+//            String amount = "";
+//            String mpesaReceiptNumber = "";
+//            String phoneNumber = "";
+//
+//            for (int i = 0; i < itemArray.length(); i++) {
+//                JSONObject itemJson = itemArray.getJSONObject(i);
+//                String name = itemJson.getString("Name");
+//                String value = itemJson.getString("Value");
+//
+//                switch (name) {
+//                    case "Amount":
+//                        amount = value;
+//                        break;
+//                    case "MpesaReceiptNumber":
+//                        mpesaReceiptNumber = value;
+//                        break;
+//                    case "PhoneNumber":
+//                        phoneNumber = value;
+//                        break;
+//                }
+//            }
+//
+//            // Create and populate StkPushCallback
+//            StkPushCallback stkPushCallback = new StkPushCallback();
+//            stkPushCallback.setMerchantRequestId(stkCallback.getString("MerchantRequestID"));
+//            stkPushCallback.setCheckoutRequestId(stkCallback.getString("CheckoutRequestID"));
+//            stkPushCallback.setResultCode(stkCallback.getInt("ResultCode"));
+//            stkPushCallback.setResultDesc(stkCallback.getString("ResultDesc"));
+//
+//            // Create CallbackMetadata and add it to StkPushCallback
+//            CallbackMetadata callbackMetadata = new CallbackMetadata();
+//            callbackMetadata.setItems(itemArray.toList().stream()
+//                    .map(obj -> {
+//                        JSONObject itemJson = (JSONObject) obj;
+//                        MetadataItem metadataItem = new MetadataItem();
+//                        metadataItem.setName(itemJson.getString("Name"));
+//                        metadataItem.setValue(itemJson.getString("Value"));
+//                        return metadataItem;
+//                    })
+//                    .collect(Collectors.toList()));
+//            stkPushCallback.setCallbackMetadata(callbackMetadata);
+//
+//            // Save the StkPushCallback which will cascade and save CallbackMetadata and MetadataItem
+//            callbackRepository.save(stkPushCallback);
+//
+//            // Log extracted values
+//            System.out.println("Amount: " + amount);
+//            System.out.println("Mpesa Receipt Number: " + mpesaReceiptNumber);
+//            System.out.println("Phone Number: " + phoneNumber);
+//
+//            // Respond with confirmation
+//            return ResponseEntity.ok("Data received");
+//
+//        } catch (Exception e) {
+//            // Handle exceptions
+//            System.err.println("Error processing callback: " + e.getMessage());
+//            return ResponseEntity.status(500).body("Error processing callback");
+//        }
+//    }
 }
