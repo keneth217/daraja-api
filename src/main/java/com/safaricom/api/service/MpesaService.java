@@ -8,6 +8,7 @@ import com.safaricom.api.entity.StkPushCallback;
 import com.safaricom.api.repository.MpesaTransactionRepository;
 import com.safaricom.api.repository.StkPushCallbackRepository;
 import jakarta.transaction.Transactional;
+import lombok.AllArgsConstructor;
 import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -26,6 +27,7 @@ import java.util.Base64;
 import java.util.List;
 
 @Service
+@AllArgsConstructor
 public class MpesaService {
 
     @Value("${safaricom.api.url}")
@@ -51,11 +53,7 @@ private final MpesaTransactionRepository transactionRepository;
 
 
 
-    public MpesaService(MpesaTransactionRepository transactionRepository, StkPushCallbackRepository callbackRepository, ObjectMapper objectMapper) {
-        this.transactionRepository = transactionRepository;
-        this.callbackRepository = callbackRepository;
-        this.objectMapper = objectMapper;
-    }
+
 
     // Method to generate OAuth token
     public String generateToken() throws IOException {
@@ -138,9 +136,14 @@ private final MpesaTransactionRepository transactionRepository;
                     !jsonResponse.getJSONObject("Body").getJSONObject("stkCallback").has("CallbackMetadata")) {
 
                 // For failed transactions
-                JSONObject stkCallback = jsonResponse.getJSONObject("Body").getJSONObject("stkCallback");
-                String resultDesc = stkCallback.getString("ResultDesc");
-                System.out.println("Transaction failed: " + resultDesc);
+                if (jsonResponse.has("Body") &&
+                        jsonResponse.getJSONObject("Body").has("stkCallback")) {
+                    JSONObject stkCallback = jsonResponse.getJSONObject("Body").getJSONObject("stkCallback");
+                    String resultDesc = stkCallback.getString("ResultDesc");
+                    System.out.println("Transaction failed: " + resultDesc);
+                } else {
+                    System.out.println("Invalid callback data received.");
+                }
                 return;
             }
 
@@ -168,7 +171,6 @@ private final MpesaTransactionRepository transactionRepository;
                 } else {
                     value = valueObj.toString();
                 }
-
                 switch (name) {
                     case "Amount":
                         amount = value;
@@ -202,7 +204,6 @@ private final MpesaTransactionRepository transactionRepository;
             throw new RuntimeException("Failed to process callback: " + e.getMessage(), e);
         }
     }
-
 
 
     // Method to get current timestamp in the required format

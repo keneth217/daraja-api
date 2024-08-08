@@ -37,15 +37,14 @@ public class MpesaController {
     }
 
     @PostMapping("/callback")
-    public String handleCallback(@RequestBody String callbackResponse) {
+    public ResponseEntity<String> handleMpesaCallback(@RequestBody String callbackResponse) {
         try {
-            // Delegate the processing to the service
+            // Process the callback
             mpesaService.processCallback(callbackResponse);
-            return "ok";
+            return ResponseEntity.ok("Callback processed successfully");
         } catch (Exception e) {
-            // Log and handle the exception
-            System.err.println("Failed to handle callback: " + e.getMessage());
-            return "ok";
+            System.err.println("Failed to process callback: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error processing callback");
         }
     }
 
