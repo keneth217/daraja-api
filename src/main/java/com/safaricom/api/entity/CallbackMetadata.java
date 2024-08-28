@@ -1,12 +1,14 @@
 package com.safaricom.api.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.util.List;
 
+@Getter
+@Setter
 @Entity
-@Data
 @Table(name = "callback_metadata")
 public class CallbackMetadata {
 
@@ -14,6 +16,8 @@ public class CallbackMetadata {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @OneToMany(cascade = CascadeType.ALL, mappedBy = "callbackMetadata", orphanRemoval = true)
-    private List<MetadataItem> items;
+    @OneToMany(mappedBy = "callbackMetadata", cascade = CascadeType.ALL)
+    private List<MetadataItem> items;  // 'mappedBy' should correspond to 'callbackMetadata' in MetadataItem
+
+    // Other fields and methods
 }
