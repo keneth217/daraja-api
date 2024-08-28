@@ -5,6 +5,7 @@ import com.safaricom.api.entity.CallbackMetadata;
 import com.safaricom.api.entity.MetadataItem;
 import com.safaricom.api.entity.MpesaTransaction;
 import com.safaricom.api.entity.StkPushCallback;
+import com.safaricom.api.repository.MetadataItemRepository;
 import com.safaricom.api.repository.MpesaTransactionRepository;
 import com.safaricom.api.repository.StkPushCallbackRepository;
 import jakarta.transaction.Transactional;
@@ -12,7 +13,6 @@ import lombok.AllArgsConstructor;
 import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,7 +27,6 @@ import java.util.Base64;
 import java.util.List;
 
 @Service
-@AllArgsConstructor
 public class MpesaService {
 
     @Value("${safaricom.api.url}")
@@ -47,13 +46,16 @@ public class MpesaService {
 
     @Value("${safaricom.api.callback_url}")
     private String callbackUrl;
-private final MpesaTransactionRepository transactionRepository;
-    private final StkPushCallbackRepository callbackRepository;
+
+    private final MpesaTransactionRepository transactionRepository;
+    private final MetadataItemRepository metadataItemRepository; // Inject the MetadataItemRepository
     private final ObjectMapper objectMapper;
 
-
-
-
+    public MpesaService(MpesaTransactionRepository transactionRepository, MetadataItemRepository metadataItemRepository, ObjectMapper objectMapper) {
+        this.transactionRepository = transactionRepository;
+        this.metadataItemRepository = metadataItemRepository;
+        this.objectMapper = objectMapper;
+    }
 
     // Method to generate OAuth token
     public String generateToken() throws IOException {
@@ -92,7 +94,7 @@ private final MpesaTransactionRepository transactionRepository;
         requestBody.put("Amount", stkPushRequest.getAmount()); // Use the actual amount
         requestBody.put("PartyA", stkPushRequest.getPhoneNumber()); // Use the actual phone number
         requestBody.put("PartyB", lipaNaMpesaShortcode); // Shortcode should be the same for PartyB
-        requestBody.put("PhoneNumber",stkPushRequest.getPhoneNumber()); // Use the actual phone number
+        requestBody.put("PhoneNumber", stkPushRequest.getPhoneNumber()); // Use the actual phone number
         requestBody.put("CallBackURL", callbackUrl);
         requestBody.put("AccountReference", "test");
         requestBody.put("TransactionDesc", "test");
@@ -152,51 +154,37 @@ private final MpesaTransactionRepository transactionRepository;
             JSONObject callbackMetadataJson = stkCallback.getJSONObject("CallbackMetadata");
             JSONArray itemArray = callbackMetadataJson.getJSONArray("Item");
 
-            // Extract values from CallbackMetadata
-            String amount = null;
-            String mpesaCode = null;
-            String phoneNumber = null;
-
+            // Extract values from CallbackMetadata and store them
+            List<MetadataItem> metadataItems = new ArrayList<>();
             for (int i = 0; i < itemArray.length(); i++) {
                 JSONObject itemJson = itemArray.getJSONObject(i);
                 String name = itemJson.getString("Name");
+                String value = itemJson.get("Value").toString();
 
-                // Handle Value as different types
-                Object valueObj = itemJson.get("Value");
-                String value;
-                if (valueObj instanceof String) {
-                    value = (String) valueObj;
-                } else if (valueObj instanceof Number) {
-                    value = valueObj.toString(); // Convert Number to String
-                } else {
-                    value = valueObj.toString();
-                }
-                switch (name) {
-                    case "Amount":
-                        amount = value;
-                        break;
-                    case "MpesaReceiptNumber":
-                        mpesaCode = value;
-                        break;
-                    case "PhoneNumber":
-                        phoneNumber = value;
-                        break;
-                }
+                MetadataItem metadataItem = new MetadataItem();
+                metadataItem.setName(name);
+                metadataItem.setValue(value);
+
+                metadataItems.add(metadataItem);
             }
 
             // Create and save the transaction entity
             MpesaTransaction transaction = new MpesaTransaction();
-            transaction.setAmount(amount);
-            transaction.setMpesaReceiptNumber(mpesaCode);
-            transaction.setPhoneNumber(phoneNumber);
+            transaction.setAmount(metadataItems.stream().filter(item -> "Amount".equals(item.getName())).map(MetadataItem::getValue).findFirst().orElse(null));
+            transaction.setMpesaReceiptNumber(metadataItems.stream().filter(item -> "MpesaReceiptNumber".equals(item.getName())).map(MetadataItem::getValue).findFirst().orElse(null));
+            transaction.setPhoneNumber(metadataItems.stream().filter(item -> "PhoneNumber".equals(item.getName())).map(MetadataItem::getValue).findFirst().orElse(null));
 
-            System.out.println("--------------------------saving to database--------------------");
-            System.out.println(transaction);
-
+            // Save the transaction
             transactionRepository.save(transaction);
 
+            // Save each metadata item associated with the transaction
+            for (MetadataItem item : metadataItems) {
+                item.setTransaction(transaction); // Set the relationship
+                metadataItemRepository.save(item);    // Save the metadata item
+            }
             // Log extracted values
-            System.out.println(String.format("Amount: %s, MpesaCode: %s, PhoneNumber: %s", amount, mpesaCode, phoneNumber));
+            System.out.println("Saved transaction: " + transaction);
+            System.out.println("Saved metadata items: " + metadataItems);
 
         } catch (Exception e) {
             // Log and rethrow the exception
@@ -204,7 +192,6 @@ private final MpesaTransactionRepository transactionRepository;
             throw new RuntimeException("Failed to process callback: " + e.getMessage(), e);
         }
     }
-
 
     // Method to get current timestamp in the required format
     private String getCurrentTimestamp() {
