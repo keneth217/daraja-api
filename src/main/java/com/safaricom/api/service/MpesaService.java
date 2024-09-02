@@ -154,8 +154,48 @@ public class MpesaService {
             JSONObject callbackMetadataJson = stkCallback.getJSONObject("CallbackMetadata");
             JSONArray itemArray = callbackMetadataJson.getJSONArray("Item");
 
-            // Extract values from CallbackMetadata and store them
-            List<MetadataItem> metadataItems = new ArrayList<>();
+            // Initialize variables to store metadata values
+            String amount = null;
+            String mpesaReceiptNumber = null;
+            String transactionDate = null;
+            String phoneNumber = null;
+
+            // Extract values from CallbackMetadata
+            for (int i = 0; i < itemArray.length(); i++) {
+                JSONObject itemJson = itemArray.getJSONObject(i);
+                String name = itemJson.getString("Name");
+                String value = itemJson.get("Value").toString();
+
+                switch (name) {
+                    case "Amount":
+                        amount = value;
+                        break;
+                    case "MpesaReceiptNumber":
+                        mpesaReceiptNumber = value;
+                        break;
+                    case "TransactionDate":
+                        transactionDate = value;
+                        break;
+                    case "PhoneNumber":
+                        phoneNumber = value;
+                        break;
+                    default:
+                        // Handle unexpected metadata fields if necessary
+                        System.out.println("Unexpected metadata field: " + name);
+                        break;
+                }
+            }
+
+            // Create and save the transaction entity
+            MpesaTransaction transaction = new MpesaTransaction();
+            transaction.setAmount(amount);
+            transaction.setMpesaReceiptNumber(mpesaReceiptNumber);
+            transaction.setPhoneNumber(phoneNumber);
+
+            // Save the transaction
+            transactionRepository.save(transaction);
+
+            // Save each metadata item associated with the transaction
             for (int i = 0; i < itemArray.length(); i++) {
                 JSONObject itemJson = itemArray.getJSONObject(i);
                 String name = itemJson.getString("Name");
@@ -164,27 +204,14 @@ public class MpesaService {
                 MetadataItem metadataItem = new MetadataItem();
                 metadataItem.setName(name);
                 metadataItem.setValue(value);
+                metadataItem.setTransaction(transaction); // Set the relationship
 
-                metadataItems.add(metadataItem);
+                metadataItemRepository.save(metadataItem); // Save the metadata item
             }
 
-            // Create and save the transaction entity
-            MpesaTransaction transaction = new MpesaTransaction();
-            transaction.setAmount(metadataItems.stream().filter(item -> "Amount".equals(item.getName())).map(MetadataItem::getValue).findFirst().orElse(null));
-            transaction.setMpesaReceiptNumber(metadataItems.stream().filter(item -> "MpesaReceiptNumber".equals(item.getName())).map(MetadataItem::getValue).findFirst().orElse(null));
-            transaction.setPhoneNumber(metadataItems.stream().filter(item -> "PhoneNumber".equals(item.getName())).map(MetadataItem::getValue).findFirst().orElse(null));
-
-            // Save the transaction
-            transactionRepository.save(transaction);
-
-            // Save each metadata item associated with the transaction
-            for (MetadataItem item : metadataItems) {
-                item.setTransaction(transaction); // Set the relationship
-                metadataItemRepository.save(item);    // Save the metadata item
-            }
             // Log extracted values
             System.out.println("Saved transaction: " + transaction);
-            System.out.println("Saved metadata items: " + metadataItems);
+            System.out.println("Saved metadata items.");
 
         } catch (Exception e) {
             // Log and rethrow the exception
